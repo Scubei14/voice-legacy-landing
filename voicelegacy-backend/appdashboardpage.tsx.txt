@@ -1,0 +1,75 @@
+/* app/dashboard/page.tsx */
+"use client";
+
+import { useEffect, useState } from "react";
+import http from "@/lib/http";
+
+type Persona = {
+  id: number;
+  name: string;
+  voice_provider?: string;
+  voice_id?: string | null;
+  traits?: Record<string, any>;
+  created_at?: string;
+};
+
+export default function DashboardPage() {
+  const [personas, setPersonas] = useState<Persona[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const p = await http.get("/api/personas/");
+        // Normalize: backend returns an array already
+        const data = Array.isArray(p.data) ? p.data : (p.data?.items ?? []);
+        setPersonas(data as Persona[]);
+      } catch (e) {
+        console.error("Failed to load personas", e);
+        setPersonas([]);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="p-6">
+        <h1 className="text-2xl font-semibold">Your space</h1>
+        <p className="opacity-70 mt-2">Loading…</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 space-y-8">
+      <h1 className="text-3xl font-semibold">Your space</h1>
+
+      <section className="grid sm:grid-cols-3 gap-4">
+        {personas.length === 0 && (
+          <div className="col-span-3 opacity-70">
+            No personas yet. Create one to get started.
+          </div>
+        )}
+
+        {personas.map((p) => (
+          <div key={p.id} className="rounded-2xl border p-4">
+            <div className="text-lg font-medium">{p.name}</div>
+            <div className="text-sm opacity-70 mt-1">
+              {p.voice_provider ?? "voice: default"}
+            </div>
+            <div className="mt-3">
+              <a
+                href={`/personas/${p.id}`}
+                className="inline-block rounded-xl border px-3 py-2 text-sm hover:bg-black hover:text-white transition"
+              >
+                Open
+              </a>
+            </div>
+          </div>
+        ))}
+      </section>
+    </div>
+  );
+}

@@ -1,0 +1,40 @@
+<!doctype html><meta charset="utf-8"><title>VoiceLegacy – Continuous Talk Demo</title>
+<body style="font:16px/1.4 system-ui;margin:2rem;max-width:840px">
+<h1>🎙️ VoiceLegacy – Continuous Conversation</h1>
+<p>Paste a JWT (from <code>/api/auth/register</code> or <code>/api/auth/login</code>), a Persona ID, then Connect.</p>
+<label>WS URL <input id="wsUrl" size="60" value="ws://localhost:8000/realtime/voice/ws"></label><br>
+<label>JWT <input id="token" size="60" placeholder="access token"></label><br>
+<label>Persona ID <input id="personaId" size="8" value="1"></label>
+<button id="connectBtn">Connect</button> <button id="disconnectBtn" disabled>Disconnect</button>
+<div id="log" style="border:1px solid #ddd;padding:12px;height:240px;overflow:auto;margin-top:12px;background:#fafafa"></div>
+<audio id="player" preload="none"></audio>
+<script>
+let ws, mediaStream, mediaRecorder, audioCtx, analyser, rafId, speaking=false, sentSinceCommit=false, silenceMs=0, speechMs=0;
+const TH=0.02, FRAME=50, MIN_SPEECH=250, END_SIL=600; const logEl=document.getElementById('log');
+function log(m){logEl.innerHTML+=`<div>${new Date().toLocaleTimeString()} ${m}</div>`; logEl.scrollTop=logEl.scrollHeight}
+async function start(){
+  const url=document.getElementById('wsUrl').value.trim(), token=document.getElementById('token').value.trim(), personaId=+document.getElementById('personaId').value.trim();
+  if(!token) return alert('Paste token'); ws=new WebSocket(`${url}?token=${encodeURIComponent(token)}`);
+  ws.onopen=()=>{log('WS connected'); ws.send(JSON.stringify({type:'start', persona_id: personaId}))};
+  ws.onmessage=evt=>{try{const m=JSON.parse(evt.data); if(m.type==='reply'){log('<b>AI:</b> '+m.text); if(m.audio_b64){const a=document.getElementById('player'); a.src=`data:audio/mpeg;base64,${m.audio_b64}`; a.play().catch(()=>{});}}}catch(_){}}
+  ws.onclose=()=>{log('WS closed'); stopMedia()}; await startMedia();
+}
+async function startMedia(){
+  mediaStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true, noiseSuppression:true, channelCount:1, sampleRate:48000}});
+  const mime=MediaRecorder.isTypeSupported('audio/webm;codecs=opus')?'audio/webm;codecs=opus':'audio/webm';
+  mediaRecorder=new MediaRecorder(mediaStream,{mimeType:mime, audioBitsPerSecond:64000});
+  mediaRecorder.ondataavailable=async e=>{if(!ws||ws.readyState!==1) return; if(e.data&&e.data.size>0){const ab=await e.data.arrayBuffer(); const b64=btoa(String.fromCharCode(...new Uint8Array(ab))); ws.send(JSON.stringify({type:'audio', data_b64:b64})); sentSinceCommit=true;}};
+  mediaRecorder.start(250);
+  audioCtx=new (window.AudioContext||window.webkitAudioContext)(); const src=audioCtx.createMediaStreamSource(mediaStream); analyser=audioCtx.createAnalyser(); analyser.fftSize=1024; src.connect(analyser);
+  const buf=new Float32Array(analyser.fftSize);
+  const loop=()=>{analyser.getFloatTimeDomainData(buf); let sum=0; for(let i=0;i<buf.length;i++) sum+=buf[i]*buf[i]; const rms=Math.sqrt(sum/buf.length);
+    const isSpeech=rms>TH; if(isSpeech){speechMs+=FRAME; silenceMs=0; if(!speaking && speechMs>=MIN_SPEECH){speaking=true;}} else {if(speaking) silenceMs+=FRAME; else speechMs=0;}
+    if(speaking && silenceMs>=END_SIL){ if(ws&&ws.readyState===1 && sentSinceCommit){ws.send(JSON.stringify({type:'commit', mime:'audio/webm'}));}
+      speaking=false; silenceMs=0; speechMs=0; sentSinceCommit=false;}
+    rafId=requestAnimationFrame(loop);}; loop();
+}
+function stopMedia(){if(rafId) cancelAnimationFrame(rafId); if(mediaRecorder&&mediaRecorder.state!=='inactive') mediaRecorder.stop(); mediaStream?.getTracks().forEach(t=>t.stop()); audioCtx?.close();}
+document.getElementById('connectBtn').onclick=()=>{document.getElementById('connectBtn').disabled=true; document.getElementById('disconnectBtn').disabled=false; start().catch(e=>log('Failed: '+e.message));};
+document.getElementById('disconnectBtn').onclick=()=>{stopMedia(); if(ws&&ws.readyState<=1) ws.close(1000,'bye'); ws=null; document.getElementById('disconnectBtn').disabled=true; document.getElementById('connectBtn').disabled=false;};
+</script>
+</body>
